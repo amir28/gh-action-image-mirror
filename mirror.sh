@@ -153,41 +153,28 @@ mirror() {
   _manifest=$(mktemp -t manifest.XXXXXX)
   docker manifest inspect "$1" > "$_manifest"
 
-  if grep -qF 'distribution.manifest.list' "$_manifest"; then
-    verbose "$1 is a multi-platform image, pushing one platform at a time"
-    platforms "$1" < "$_manifest" | while IFS= read -r platform; do
-      verbose "Fetching $1 at $platform"
-      docker image pull --platform "$platform" "$1"
-      platform_id=$(printf %s\\n "$platform" | tr '/' '-')
-      verbose "Pushing $1 at $platform as $destimg:${tag}-$platform_id"
-      docker image tag "$1" "$destimg:${tag}-$platform_id"
-      if [ "$MIRROR_DRYRUN" = 1 ]; then
-        verbose "Would push image $destimg:${tag}-$platform_id"
-      else
-        docker image push "$destimg:${tag}-$platform_id"
-      fi
-
-      if [ "$MIRROR_DRYRUN" = 1 ]; then
-        verbose "Would add $destimg:${tag}-$platform_id to manifest $destimg:$tag"
-      else
-        verbose "Adding $destimg:${tag}-$platform_id to manifest $destimg:$tag"
-        docker manifest create --amend "$destimg:$tag" "$destimg:${tag}-$platform_id"
-      fi
-    done
-
-    verbose "Pushing manifest $destimg:$tag"
-    docker manifest push "$destimg:$tag"
-  else
-    verbose "$1 is a single-platform image"
-    docker image pull "$1"
-    docker image tag "$1" "$destimg:$tag"
+  for platform in $(jq -r '.manifests[] | select(.platform.os == "linux") | .platform.architecture' "$_manifest" | sort | uniq); do
+    verbose "Fetching $1 at $platform"
+    docker image pull --platform "$platform" "$1"
+    platform_id=$(printf %s\\n "$platform" | tr '/' '-')
+    verbose "Pushing $1 at $platform as $destimg:${tag}-$platform_id"
+    docker image tag "$1" "$destimg:${tag}-$platform_id"
     if [ "$MIRROR_DRYRUN" = 1 ]; then
-      verbose "Would push image $destimg:$tag"
+      verbose "Would push image $destimg:${tag}-$platform_id"
     else
-      verbose "Pushing image $destimg:$tag"
-      docker image push "$destimg:$tag"
+      docker image push "$destimg:${tag}-$platform_id"
     fi
-  fi
+
+    if [ "$MIRROR_DRYRUN" = 1 ]; then
+      verbose "Would add $destimg:${tag}-$platform_id to manifest $destimg:$tag"
+    else
+      verbose "Adding $destimg:${tag}-$platform_id to manifest $destimg:$tag"
+      docker manifest create --amend "$destimg:$tag" "$destimg:${tag}-$platform_id"
+    fi
+  done
+  verbose "Pushing manifest $destimg:$tag"
+  docker manifest push "$destimg:$tag"
+  
 
   # Cleanup
   rm -f "$_manifest"
